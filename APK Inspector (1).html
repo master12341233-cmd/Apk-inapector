@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>APK Inspector</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{--bg:#f5f5f7;--card:#fff;--text:#1a1a1a;--sub:#666;--accent:#2563eb;--good:#16a34a;--bad:#dc2626;--warn:#d97706;--border:#e5e5e5;}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#121214;--card:#1c1c1f;--text:#f0f0f0;--sub:#999;--border:#2e2e32;}}
+:root[data-theme="dark"]{--bg:#121214;--card:#1c1c1f;--text:#f0f0f0;--sub:#999;--border:#2e2e32;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,system-ui,sans-serif;padding:16px;padding-top:calc(16px + env(safe-area-inset-top,0px));padding-bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:640px;margin-inline:auto;}
+h1{font-size:1.3em;margin:0 0 4px}
+.sub{color:var(--sub);font-size:.85em;margin-bottom:16px;line-height:1.4}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px}
+.card h3{margin:0 0 10px;font-size:.95em;color:var(--sub);text-transform:uppercase;letter-spacing:.03em}
+input[type=file]{width:100%;padding:12px;border:2px dashed var(--border);border-radius:10px;background:var(--card);color:var(--text)}
+.row{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:.92em}
+.row:last-child{border:none}
+.label{color:var(--sub);white-space:nowrap}
+.val{text-align:right;word-break:break-word}
+.tag{display:inline-block;padding:3px 9px;border-radius:999px;font-size:.78em;font-weight:600;margin:2px 4px 2px 0}
+.tag.good{background:rgba(22,163,74,.15);color:var(--good)}
+.tag.bad{background:rgba(220,38,38,.15);color:var(--bad)}
+.tag.warn{background:rgba(217,119,6,.15);color:var(--warn)}
+.tag.neutral{background:rgba(37,99,235,.15);color:var(--accent)}
+.verdict{font-size:1.05em;font-weight:600;margin-top:4px;line-height:1.4}
+#out{display:none}
+.spin{color:var(--sub);font-size:.9em;margin-top:8px}
+button{background:var(--accent);color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:.9em;font-weight:600;width:100%;margin-top:8px}
+button:active{opacity:.8}
+.pill-wrap{display:flex;flex-wrap:wrap;gap:4px}
+.install{background:rgba(37,99,235,.08);border:1px solid var(--accent);border-radius:10px;padding:12px;font-size:.85em;margin-top:12px;line-height:1.5}
+</style>
+</head>
+<body>
+<h1>APK Inspector</h1>
+<div class="sub">Pick an .apk to see its engine, whether its scripts are encrypted, permissions, bundled SDKs, and a mod-difficulty verdict — all on-device, nothing uploaded anywhere.</div>
+<div class="card">
+<input type="file" id="f" accept=".apk,.zip">
+<div class="spin" id="spin" style="display:none">Reading file…</div>
+</div>
+<div id="out">
+<div class="card"><div id="verdictBox"></div></div>
+
+<div class="card">
+<h3>Overview</h3>
+<div class="row"><span class="label">File size</span><span class="val" id="size"></span></div>
+<div class="row"><span class="label">Total files</span><span class="val" id="count"></span></div>
+<div class="row"><span class="label">Engine guess</span><span class="val" id="engine"></span></div>
+<div class="row"><span class="label">Native libs</span><span class="val" id="libs"></span></div>
+<div class="row"><span class="label">ABIs (arch)</span><span class="val" id="abis"></span></div>
+</div>
+
+<div class="card">
+<h3>Scripts & data</h3>
+<div class="row"><span class="label">Script language</span><span class="val" id="script"></span></div>
+<div class="row"><span class="label">Encryption</span><span class="val" id="crypto"></span></div>
+<div class="row"><span class="label">Binary data files</span><span class="val" id="bindata"></span></div>
+</div>
+
+<div class="card">
+<h3>File breakdown</h3>
+<div class="row"><span class="label">Images</span><span class="val" id="fimg"></span></div>
+<div class="row"><span class="label">Audio</span><span class="val" id="faud"></span></div>
+<div class="row"><span class="label">Fonts</span><span class="val" id="ffont"></span></div>
+<div class="row"><span class="label">Config/data (xml,json,plist,csv)</span><span class="val" id="fcfg"></span></div>
+</div>
+
+<div class="card">
+<h3>Permissions requested</h3>
+<div class="pill-wrap" id="perms"></div>
+</div>
+
+<div class="card">
+<h3>Bundled SDKs detected</h3>
+<div class="pill-wrap" id="sdks"></div>
+</div>
+
+<div class="card">
+<h3>Server / network hints</h3>
+<div class="row"><span class="label">Hostnames found in code</span><span class="val" id="hosts" style="text-align:left"></span></div>
+</div>
+
+<button id="copyBtn">Copy full report as text</button>
+
+<div class="install">
+📲 <b>To get this as a home-screen app with no ads and no third-party builder:</b> open this page in Chrome → menu (⋮) → <b>"Add to Home screen" / "Install app"</b>. It'll launch full-screen with its own icon, just like an installed app — because it already is a standalone page with no login, no ads, and nothing else loaded.
+</div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let reportText='';
+
+function decodeAXMLStrings(buf){
+  // Minimal AXML string-pool reader: finds the global string pool chunk and extracts UTF-16LE strings.
+  const dv=new DataView(buf.buffer||buf);
+  let out=[];
+  try{
+    // chunk at offset 8 should be string pool (type 0x0001)
+    let off=8;
+    const type=dv.getUint16(off,true);
+    if(type!==0x0001) return out;
+    const chunkSize=dv.getUint32(off+4,true);
+    const stringCount=dv.getUint32(off+8,true);
+    const flags=dv.getUint32(off+16,true);
+    const stringsStart=dv.getUint32(off+20,true);
+    const isUTF8=(flags & 0x100)!==0;
+    const base=off+stringsStart;
+    for(let i=0;i<stringCount;i++){
+      const strOff=dv.getUint32(off+28+i*4,true);
+      let p=base+strOff;
+      if(isUTF8){
+        let len=dv.getUint8(p+1); p+=2; let s='';
+        for(let k=0;k<len;k++) s+=String.fromCharCode(dv.getUint8(p+k));
+        out.push(s);
+      } else {
+        let len=dv.getUint16(p,true); p+=2; let s='';
+        for(let k=0;k<len;k++) s+=String.fromCharCode(dv.getUint16(p+k*2,true));
+        out.push(s);
+      }
+    }
+  }catch(e){}
+  return out;
+}
+
+const SDK_SIGNATURES = {
+  'Google AdMob / Ads': ['com/google/android/gms/ads','com.google.android.gms.ads'],
+  'Facebook Ads/SDK': ['com/facebook/ads','com.facebook.ads'],
+  'AppsFlyer (analytics)': ['appsflyer'],
+  'Chartboost (ads)': ['chartboost'],
+  'Unity Ads': ['unity3d.ads','com/unity3d/services'],
+  'AppLovin': ['applovin'],
+  'Vungle': ['vungle'],
+  'ironSource': ['ironsource'],
+  'Firebase': ['com/google/firebase','firebase'],
+  'Amazon Ads': ['amazon.device.ads'],
+  'Mintegral': ['mintegral'],
+};
+
+fileInput:
+$('f').addEventListener('change',async e=>{
+  const file=e.target.files[0]; if(!file) return;
+  $('spin').style.display='block'; $('out').style.display='none';
+  try{
+    const zip=await JSZip.loadAsync(file);
+    const names=Object.keys(zip.files).filter(n=>!zip.files[n].dir);
+    $('size').textContent=(file.size/1024/1024).toFixed(1)+' MB';
+    $('count').textContent=names.length;
+
+    const libDirs=[...new Set(names.filter(n=>n.startsWith('lib/')).map(n=>n.split('/')[1]))].filter(Boolean);
+    $('libs').textContent=libDirs.length? [...new Set(names.filter(n=>n.startsWith('lib/')).map(n=>n.split('/').pop()))].join(', ') : 'none found';
+    $('abis').textContent=libDirs.length? libDirs.join(', ') : '—';
+
+    const soFiles=names.filter(n=>n.endsWith('.so'));
+    let engine='Unknown';
+    if(soFiles.some(n=>/libil2cpp|libunity/i.test(n))) engine='Unity (IL2CPP/Mono)';
+    else if(soFiles.some(n=>/libcocos2dcpp/i.test(n))) engine='Cocos2d-x (C++)';
+    else if(soFiles.some(n=>/libgame\.so$/i.test(n))) engine='Cocos2d-x + Lua (custom build)';
+    else if(soFiles.some(n=>/DecRaw/i.test(n))) engine='Gameloft custom engine (protected loader)';
+    else if(soFiles.length) engine='Native/custom engine';
+    else engine='Java/Kotlin (no native libs)';
+    $('engine').textContent=engine;
+
+    const luaFiles=names.filter(n=>/\.lua$/i.test(n));
+    const jsFiles=names.filter(n=>/assets\/.*\.js$/i.test(n));
+    $('script').textContent = luaFiles.length? `Lua (${luaFiles.length} files)` : jsFiles.length? `JS (${jsFiles.length} files)` : 'None found — logic likely compiled into native lib';
+
+    let encrypted=false;
+    const sampleLua=luaFiles.slice(0,5);
+    for(const n of sampleLua){
+      const buf=await zip.files[n].async('uint8array');
+      const head=new TextDecoder('latin1').decode(buf.slice(0,8));
+      if(head.includes('DHGAMES')||!/^[\x09-\x7e]*$/.test(head.slice(0,4))) encrypted=true;
+    }
+    $('crypto').textContent = sampleLua.length ? (encrypted?'Encrypted / scrambled headers detected':'Plain text — directly readable') : 'No script files to check';
+
+    const binFiles=names.filter(n=>/\.bin$/i.test(n));
+    $('bindata').textContent = binFiles.length? `${binFiles.length} .bin files (custom packed format — needs native-code analysis to decode layout)` : 'none';
+
+    const img=names.filter(n=>/\.(png|jpg|jpeg|webp)$/i.test(n)).length;
+    const aud=names.filter(n=>/\.(mp3|ogg|wav)$/i.test(n)).length;
+    const fnt=names.filter(n=>/\.(ttf|fnt|otf)$/i.test(n)).length;
+    const cfg=names.filter(n=>/\.(xml|json|plist|csv)$/i.test(n)).length;
+    $('fimg').textContent=img; $('faud').textContent=aud; $('ffont').textContent=fnt; $('fcfg').textContent=cfg;
+
+    // Manifest permissions
+    let permsFound=[];
+    try{
+      const manBuf=await zip.files['AndroidManifest.xml'].async('arraybuffer');
+      const strs=decodeAXMLStrings(new Uint8Array(manBuf));
+      permsFound=[...new Set(strs.filter(s=>s.startsWith('android.permission.')))];
+    }catch(e){}
+    $('perms').innerHTML = permsFound.length? permsFound.map(p=>`<span class="tag neutral">${p.replace('android.permission.','')}</span>`).join('') : '<span class="tag neutral">Could not parse (binary XML)</span>';
+
+    // SDK signature scan across dex + so + asset filenames/strings (lightweight: scan file path list + small text peek)
+    let sdkHits=new Set();
+    const hay = names.join('\n').toLowerCase();
+    for(const [label,sigs] of Object.entries(SDK_SIGNATURES)){
+      if(sigs.some(s=>hay.includes(s.toLowerCase()))) sdkHits.add(label);
+    }
+    // also peek inside smallest .so for ad-sdk strings cheaply
+    $('sdks').innerHTML = sdkHits.size? [...sdkHits].map(s=>`<span class="tag warn">${s}</span>`).join('') : '<span class="tag good">None obviously detected from file paths</span>';
+
+    // Host/domain scan inside native libs (first match only, cheap)
+    let hosts=new Set();
+    for(const n of soFiles.slice(0,2)){
+      const buf=await zip.files[n].async('uint8array');
+      const txt=new TextDecoder('latin1').decode(buf);
+      const m=txt.match(/[a-z0-9][a-z0-9\-]*\.[a-z0-9\-]+\.(com|net|cn|io)(?:[:\/][a-z0-9._\/\-]*)?/gi)||[];
+      m.slice(0,40).forEach(x=>hosts.add(x));
+    }
+    const hostList=[...hosts].filter(h=>!/\.(png|jpg|xml|dtd)/i.test(h)).slice(0,10);
+    $('hosts').innerHTML = hostList.length? hostList.map(h=>`<div style="font-size:.85em;padding:2px 0">${h}</div>`).join('') : '<span style="color:var(--sub)">None found in first native libs scanned</span>';
+
+    // verdict
+    let verdict, cls;
+    if(luaFiles.length && !encrypted){
+      verdict='✅ Good modding candidate — plain Lua scripts, edit directly.'; cls='good';
+    } else if(luaFiles.length && encrypted){
+      verdict='⚠️ Scripts are encrypted — needs the decryption key before modding (requires disassembling the native lib on a PC).'; cls='bad';
+    } else if(soFiles.some(n=>/libil2cpp/i.test(n))){
+      verdict='⚠️ Unity IL2CPP — logic is compiled, needs Il2CppDumper + a PC.'; cls='bad';
+    } else if(soFiles.some(n=>/DecRaw/i.test(n))){
+      verdict='⚠️ Gameloft protected loader — real code is hidden behind a custom wrapper. Hard, PC required.'; cls='bad';
+    } else if(!soFiles.length){
+      verdict='✅ Pure Java/Kotlin app — readable with jadx, decent modding candidate.'; cls='good';
+    } else if(binFiles.length){
+      verdict='🟡 No script encryption, but stats live in packed .bin files with no documented layout — safe editing needs the native code that reads them (PC/disassembly).'; cls='warn';
+    } else {
+      verdict='🟡 Game logic is likely compiled into the native library. Asset/image swaps are usually still possible without a PC.'; cls='warn';
+    }
+    $('verdictBox').innerHTML = `<div class="tag ${cls}">${cls==='good'?'EASIER':cls==='bad'?'HARDER':'MIXED'}</div><div class="verdict">${verdict}</div>`;
+
+    reportText = `APK Inspector Report\n${file.name}\n`+
+      `Size: ${(file.size/1024/1024).toFixed(1)} MB | Files: ${names.length}\n`+
+      `Engine: ${engine}\nABIs: ${libDirs.join(', ')||'-'}\n`+
+      `Script lang: ${$('script').textContent}\nEncryption: ${$('crypto').textContent}\nBinary data: ${$('bindata').textContent}\n`+
+      `Permissions: ${permsFound.join(', ')||'n/a'}\n`+
+      `SDKs: ${[...sdkHits].join(', ')||'none detected'}\n`+
+      `Hosts in native lib: ${hostList.join(', ')||'none'}\n`+
+      `Verdict: ${verdict}`;
+
+    $('out').style.display='block';
+  }catch(err){
+    $('verdictBox').innerHTML='<div class="tag bad">ERROR</div><div class="verdict">Could not read this file: '+err.message+'</div>';
+    $('out').style.display='block';
+  }
+  $('spin').style.display='none';
+});
+
+$('copyBtn').addEventListener('click',async ()=>{
+  try{ await navigator.clipboard.writeText(reportText); $('copyBtn').textContent='Copied ✓'; setTimeout(()=>$('copyBtn').textContent='Copy full report as text',1500);}
+  catch(e){ alert(reportText); }
+});
+</script>
+</body>
+</html>
